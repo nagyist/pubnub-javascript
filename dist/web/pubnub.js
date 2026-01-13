@@ -3118,6 +3118,8 @@
 	        data !== null && data !== void 0 ? data : (data = response.body);
 	        if (status === 402)
 	            message = 'Not available for used key set. Contact support@pubnub.com';
+	        else if (status === 404)
+	            message = 'Resource not found';
 	        else if (status === 400) {
 	            category = StatusCategory$1.PNBadRequestCategory;
 	            message = 'Bad request';
@@ -5436,7 +5438,7 @@
 	            return base.PubNubFile;
 	        },
 	        get version() {
-	            return '10.2.5';
+	            return '10.2.6';
 	        },
 	        getVersion() {
 	            return this.version;
@@ -5790,7 +5792,7 @@
 	                    activeCancellation = attemptCancellation;
 	                    const responseHandler = (res, error) => {
 	                        const retriableError = error ? error.category !== StatusCategory$1.PNCancelledCategory : true;
-	                        const retriableStatusCode = !res || res.status >= 400;
+	                        const retriableStatusCode = (!res || res.status >= 400) && (error === null || error === void 0 ? void 0 : error.statusCode) !== 404;
 	                        let delay = -1;
 	                        if (retriableError &&
 	                            retriableStatusCode &&
