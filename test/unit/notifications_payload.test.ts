@@ -77,8 +77,9 @@ describe('#notifications helper', () => {
       assert(apnsPayload);
       assert.equal(apnsPayload.aps.sound, expectedSound);
       assert(fcmPayload);
-      assert(fcmPayload.notification);
-      assert.equal(fcmPayload.notification.sound, expectedSound);
+      assert(fcmPayload.android);
+      assert(fcmPayload.android.notification);
+      assert.equal(fcmPayload.android.notification.sound, expectedSound);
     });
 
     it('should set debug flag', () => {
@@ -137,6 +138,99 @@ describe('#notifications helper', () => {
       assert.throws(() => {
         builder.buildPayload(['apns2', 'fcm']);
       });
+    });
+
+    it('should provide payload for FCM only', () => {
+      let expectedTitle = PubNub.generateUUID();
+      let expectedBody = PubNub.generateUUID();
+      let expectedPayload = {
+        pn_fcm: {
+          notification: { title: expectedTitle, body: expectedBody },
+        },
+      };
+
+      let builder = PubNub.notificationPayload(expectedTitle, expectedBody);
+
+      const result = builder.buildPayload(['fcm']);
+      assert.deepEqual(result, expectedPayload);
+      assert(!('pn_apns' in result));
+    });
+
+    it('should generate FCM Android notification fields in final payload', () => {
+      let expectedTitle = PubNub.generateUUID();
+      let expectedBody = PubNub.generateUUID();
+      let expectedSound = PubNub.generateUUID();
+      let expectedIcon = PubNub.generateUUID();
+      let expectedTag = PubNub.generateUUID();
+      let expectedPayload = {
+        pn_fcm: {
+          notification: { title: expectedTitle, body: expectedBody },
+          android: {
+            notification: { sound: expectedSound, icon: expectedIcon, tag: expectedTag },
+          },
+        },
+      };
+
+      let builder = PubNub.notificationPayload(expectedTitle, expectedBody);
+      builder.sound = expectedSound;
+      builder.fcm.icon = expectedIcon;
+      builder.fcm.tag = expectedTag;
+
+      assert.deepEqual(builder.buildPayload(['fcm']), expectedPayload);
+    });
+
+    it('should preserve FCM platform blocks in final payload', () => {
+      let expectedTitle = PubNub.generateUUID();
+      let expectedBody = PubNub.generateUUID();
+      let expectedSound = PubNub.generateUUID();
+      let expectedPayload = {
+        pn_fcm: {
+          notification: { title: expectedTitle, body: expectedBody },
+          android: {
+            priority: 'HIGH',
+            notification: { sound: expectedSound },
+          },
+          apns: {
+            headers: { 'apns-priority': '10' },
+          },
+          webpush: {
+            headers: { Urgency: 'high' },
+          },
+          fcm_options: {
+            analytics_label: 'campaign-a',
+          },
+        },
+      };
+
+      let builder = PubNub.notificationPayload(expectedTitle, expectedBody);
+      builder.sound = expectedSound;
+      (builder.fcm.payload.android as Record<string, unknown>).priority = 'HIGH';
+      builder.fcm.payload.apns = { headers: { 'apns-priority': '10' } };
+      builder.fcm.payload.webpush = { headers: { Urgency: 'high' } };
+      builder.fcm.payload.fcm_options = { analytics_label: 'campaign-a' };
+
+      assert.deepEqual(builder.buildPayload(['fcm']), expectedPayload);
+    });
+
+    it('should generate silent FCM payload with Android notification fields', () => {
+      let expectedTitle = PubNub.generateUUID();
+      let expectedBody = PubNub.generateUUID();
+      let expectedSound = PubNub.generateUUID();
+      let expectedPayload = {
+        pn_fcm: {
+          data: {
+            title: expectedTitle,
+            body: expectedBody,
+            sound: expectedSound,
+          },
+        },
+      };
+
+      let builder = PubNub.notificationPayload(expectedTitle, expectedBody);
+      builder.sound = expectedSound;
+      builder.fcm.silent = true;
+
+      assert.deepEqual(builder.buildPayload(['fcm']), expectedPayload);
     });
   });
 
@@ -326,18 +420,30 @@ describe('#notifications helper', () => {
 
       assert(builder);
       assert(platformPayloadStorage.notification);
-      assert(platformPayloadStorage.data);
+      assert(platformPayloadStorage.android);
+      assert(platformPayloadStorage.android.notification);
     });
 
-    it("should set notification 'title' and 'body' with constructor", () => {
+
+    it("should set title and body in top-level notification and badge as notification_count in android.notification", () => {
       let expectedTitle = PubNub.generateUUID();
       let expectedBody = PubNub.generateUUID();
 
       let builder = new FCMNotificationPayload(platformPayloadStorage, expectedTitle, expectedBody);
+      builder.badge = 10;
+      const payload = builder.toObject();
 
-      assert(builder);
-      assert.equal(platformPayloadStorage.notification.title, expectedTitle);
-      assert.equal(platformPayloadStorage.notification.body, expectedBody);
+      assert(payload);
+      // title and body should be in top-level notification
+      assert.equal(payload.notification!.title, expectedTitle);
+      assert.equal(payload.notification!.body, expectedBody);
+      // title and body should not be duplicated in android.notification
+      assert(!payload.android?.notification?.title);
+      assert(!payload.android?.notification?.body);
+      // badge should be set as notification_count in android.notification
+      assert(payload.android);
+      assert(payload.android.notification);
+      assert.equal(payload.android.notification.notification_count, 10);
     });
 
     it("should not set 'subtitle' because it is not supported", () => {
@@ -346,7 +452,7 @@ describe('#notifications helper', () => {
       let builder = new FCMNotificationPayload(platformPayloadStorage);
       builder.subtitle = expectedSubtitle;
 
-      assert.equal(Object.keys(platformPayloadStorage.notification).length, 0);
+      assert(!platformPayloadStorage.notification.subtitle);
     });
 
     it("should set 'body'", () => {
@@ -371,16 +477,17 @@ describe('#notifications helper', () => {
       let builder = new FCMNotificationPayload(platformPayloadStorage);
       builder.badge = 30;
 
-      assert.equal(Object.keys(platformPayloadStorage.notification).length, 0);
+      assert(!platformPayloadStorage.notification.badge);
     });
 
-    it("should set 'sound'", () => {
+    it("should set 'sound' under android.notification", () => {
       let expectedSound = PubNub.generateUUID();
 
       let builder = new FCMNotificationPayload(platformPayloadStorage);
       builder.sound = expectedSound;
 
-      assert.equal(platformPayloadStorage.notification.sound, expectedSound);
+      assert.equal(platformPayloadStorage.android.notification.sound, expectedSound);
+      assert(!platformPayloadStorage.notification.sound);
     });
 
     it("should not set 'sound' if value is empty", () => {
@@ -389,16 +496,17 @@ describe('#notifications helper', () => {
       let builder = new FCMNotificationPayload(platformPayloadStorage);
       builder.sound = expectedSound;
 
-      assert(!platformPayloadStorage.notification.sound);
+      assert(!platformPayloadStorage.android.notification.sound);
     });
 
-    it("should set 'icon'", () => {
+    it("should set 'icon' under android.notification", () => {
       let expectedIcon = PubNub.generateUUID();
 
       let builder = new FCMNotificationPayload(platformPayloadStorage);
       builder.icon = expectedIcon;
 
-      assert.equal(platformPayloadStorage.notification.icon, expectedIcon);
+      assert.equal(platformPayloadStorage.android.notification.icon, expectedIcon);
+      assert(!platformPayloadStorage.notification.icon);
     });
 
     it("should not set 'icon' if value is empty", () => {
@@ -407,16 +515,17 @@ describe('#notifications helper', () => {
       let builder = new FCMNotificationPayload(platformPayloadStorage);
       builder.icon = expectedIcon;
 
-      assert(!platformPayloadStorage.notification.icon);
+      assert(!platformPayloadStorage.android.notification.icon);
     });
 
-    it("should set 'tag'", () => {
+    it("should set 'tag' under android.notification", () => {
       let expectedTag = PubNub.generateUUID();
 
       let builder = new FCMNotificationPayload(platformPayloadStorage);
       builder.tag = expectedTag;
 
-      assert.equal(platformPayloadStorage.notification.tag, expectedTag);
+      assert.equal(platformPayloadStorage.android.notification.tag, expectedTag);
+      assert(!platformPayloadStorage.notification.tag);
     });
 
     it("should not set 'tag' if value is empty", () => {
@@ -425,7 +534,16 @@ describe('#notifications helper', () => {
       let builder = new FCMNotificationPayload(platformPayloadStorage);
       builder.tag = expectedTag;
 
-      assert(!platformPayloadStorage.notification.tag);
+      assert(!platformPayloadStorage.android.notification.tag);
+    });
+
+    it("should set 'image' on android.notification", () => {
+      let expectedImage = 'https://example.com/image.png';
+
+      let builder = new FCMNotificationPayload(platformPayloadStorage);
+      builder.payload.android!.notification!.image = expectedImage;
+
+      assert.equal(platformPayloadStorage.android.notification.image, expectedImage);
     });
 
     it('should return null when no data provided', () => {
@@ -434,15 +552,10 @@ describe('#notifications helper', () => {
       assert.equal(builder.toObject(), null);
     });
 
-    it("should move 'notification' under 'data' when set silenced", () => {
+    it("should send data under top-level 'data' when set silenced", () => {
       let expectedTitle = PubNub.generateUUID();
       let expectedBody = PubNub.generateUUID();
       let expectedSound = PubNub.generateUUID();
-      let expectedNotification = {
-        title: expectedTitle,
-        body: expectedBody,
-        sound: expectedSound,
-      };
 
       let builder = new FCMNotificationPayload(platformPayloadStorage, expectedTitle, expectedBody);
       builder.sound = expectedSound;
@@ -452,10 +565,13 @@ describe('#notifications helper', () => {
       assert(payload);
       assert(!payload.notification);
       assert(payload.data);
-      assert.deepEqual(payload.data.notification, expectedNotification);
+      assert.equal(payload.data.title, expectedTitle);
+      assert.equal(payload.data.body, expectedBody);
+      assert.equal(payload.data.sound, expectedSound, 'sound should be merged into data for silent notifications');
+      assert(!payload.android, 'android should not be present when only notification fields were set');
     });
 
-    it('should return valid payload object', () => {
+    it('should return valid payload object with v1 structure', () => {
       let expectedTitle = PubNub.generateUUID();
       let expectedBody = PubNub.generateUUID();
       let expectedSound = PubNub.generateUUID();
@@ -463,7 +579,11 @@ describe('#notifications helper', () => {
         notification: {
           title: expectedTitle,
           body: expectedBody,
-          sound: expectedSound,
+        },
+        android: {
+          notification: {
+            sound: expectedSound,
+          },
         },
       };
 
@@ -471,6 +591,34 @@ describe('#notifications helper', () => {
       builder.sound = expectedSound;
 
       assert.deepEqual(builder.toObject(), expectedPayload);
+    });
+    
+    it("should not include 'sound', 'icon', or 'tag' in top-level 'notification' output", () => {
+      const expectedTitle = PubNub.generateUUID();
+      const expectedBody = PubNub.generateUUID();
+      const expectedSound = PubNub.generateUUID();
+      const expectedIcon = PubNub.generateUUID();
+      const expectedTag = PubNub.generateUUID();
+
+      let builder = new FCMNotificationPayload(platformPayloadStorage, expectedTitle, expectedBody);
+      builder.sound = expectedSound;
+      builder.icon = expectedIcon;
+      builder.tag = expectedTag;
+      const payload = builder.toObject();
+
+      assert(payload);
+      assert(payload.notification);
+      assert.equal(Object.keys(payload.notification).length, 2);
+      assert.equal(payload.notification.title, expectedTitle);
+      assert.equal(payload.notification.body, expectedBody);
+      assert(!('sound' in payload.notification));
+      assert(!('icon' in payload.notification));
+      assert(!('tag' in payload.notification));
+      assert(payload.android);
+      assert(payload.android.notification);
+      assert.equal(payload.android.notification.sound, expectedSound);
+      assert.equal(payload.android.notification.icon, expectedIcon);
+      assert.equal(payload.android.notification.tag, expectedTag);
     });
   });
 });
